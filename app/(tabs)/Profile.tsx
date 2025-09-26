@@ -5,7 +5,6 @@ import React, { createContext, useContext, useState } from "react";
 import { StyleSheet, Switch, Text, TouchableOpacity, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import SimpleAvatar from "../../components/SimpleAvatar";
-import { AuthContext } from "../AuthProvider"; // ensure path is correct
 
 // Context for Dark Mode
 export const DarkModeContext = createContext({
@@ -23,7 +22,6 @@ const doctor = {
 export default function ProfileScreen() {
   const [isDarkMode, setIsDarkMode] = useState(false);
   const { toggleDarkMode } = useContext(DarkModeContext) || {};
-  const { logout } = useContext(AuthContext); // logout from AuthContext
   const router = useRouter(); // router to navigate after logout
 
   const handleToggleDarkMode = () => {
@@ -32,7 +30,6 @@ export default function ProfileScreen() {
   };
 
   const handleLogout = async () => {
-    await logout(); // clear login state
     router.replace("/"); // redirect to login screen
   };
 

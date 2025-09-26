@@ -93,7 +93,7 @@ export default function Dashboard() {
   // Fetch Korangi ward stats from backend
   const fetchKorangiData = async () => {
     try {
-      const res = await axios.get("http://192.168.100.73:3000/ward_beds");
+      const res = await axios.get("http://192.168.100.102:3000/ward_beds");
       const data = res.data;
 
       // Reset Korangi wards before updating

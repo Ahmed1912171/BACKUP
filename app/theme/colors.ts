@@ -1,6 +1,6 @@
 // app/theme/colors.ts
 const colors = {
-  primary: "#3b82f6", // matches your previous UI
+  primary: "#1a7726ff", // matches your previous UI
 };
 
 export default colors;

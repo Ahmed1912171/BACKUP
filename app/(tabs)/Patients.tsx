@@ -1,8 +1,11 @@
-// app/(tabs)/patients.tsx
+import axios from "axios";
 import { Eye, FileText, Search } from "lucide-react-native";
-import React, { useCallback, useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
+  ActivityIndicator,
   FlatList,
+  Image,
+  Platform,
   RefreshControl,
   SafeAreaView,
   ScrollView,
@@ -11,115 +14,150 @@ import {
   TextInput,
   TouchableOpacity,
   View,
+  useWindowDimensions,
 } from "react-native";
 import Modal from "react-native-modal";
-
-type Patient = {
-  id: string;
-  name: string;
-  mrNumber: string;
-  uniqueKey: string;
-  age: number;
-  diagnosis: string;
-  ward: string;
-  doctor: string;
-  status: "Stable" | "Monitoring" | "Recovering" | "Critical";
-  phone: string;
-  admissionDate: string;
-  room: string;
-};
-
-// Generate 20 patients
-const patients: Patient[] = Array.from({ length: 20 }, (_, i) => ({
-  id: `PAT${i + 1}`,
-  name: `Patient ${i + 1}`,
-  mrNumber: `MR${(i + 1).toString().padStart(3, "0")}`,
-  uniqueKey: `UK${(i + 1).toString().padStart(3, "0")}`,
-  age: 20 + (i % 50),
-  diagnosis: ["Pneumonia", "Diabetes", "Surgery", "Observation"][i % 4],
-  ward: ["General Ward", "Endocrine Ward", "Surgical Ward", "Cardiology"][i % 4],
-  doctor: ["Dr. Smith", "Dr. Wilson", "Dr. Brown", "Dr. Johnson"][i % 4],
-  status: ["Stable", "Monitoring", "Recovering", "Critical"][i % 4] as Patient["status"],
-  phone: `+1-555-0${100 + i}`,
-  admissionDate: `2025-09-${(10 + i).toString().padStart(2, "0")}`,
-  room: ["A-101", "B-205", "C-310", "ICU-02"][i % 4],
-}));
+import RenderHtml from "react-native-render-html";
 
 export default function PatientsScreen() {
-  const [searchQuery, setSearchQuery] = useState("");
-  const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
-  const [isModalVisible, setModalVisible] = useState(false);
-
-  // refresh state
+  const [patients, setPatients] = useState<any[]>([]);
+  const [filteredPatients, setFilteredPatients] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-  const [patientList, setPatientList] = useState<Patient[]>(patients);
+  const [searchQuery, setSearchQuery] = useState("");
 
-  const onRefresh = useCallback(() => {
-    setRefreshing(true);
+  const [selectedPatient, setSelectedPatient] = useState<any | null>(null);
+  const [modalType, setModalType] = useState<
+    "notes" | "lab" | "radiology" | null
+  >(null);
 
-    // simulate API call
-    setTimeout(() => {
-      setPatientList(prev => [
-        ...prev,
-        {
-          id: `PAT${prev.length + 1}`,
-          name: `Patient ${prev.length + 1}`,
-          mrNumber: `MR${(prev.length + 1).toString().padStart(3, "0")}`,
-          uniqueKey: `UK${(prev.length + 1).toString().padStart(3, "0")}`,
-          age: 30,
-          diagnosis: "New Diagnosis",
-          ward: "New Ward",
-          doctor: "Dr. New",
-          status: "Stable",
-          phone: "+1-555-0999",
-          admissionDate: `2025-09-30`,
-          room: "Z-999",
-        },
-      ]);
-      setRefreshing(false);
-    }, 1500);
+  const [notes, setNotes] = useState<any[]>([]);
+  const [notesLoading, setNotesLoading] = useState(false);
+
+  const { width } = useWindowDimensions();
+
+  // 🖥️ API URL
+  const LOCAL_IP = "192.168.100.102"; // change to your PC's LAN IP
+  const API_URL =
+    Platform.OS === "android"
+      ? "http://10.0.2.2:3000/patients_picu"
+      : `http://${LOCAL_IP}:3000/patients_picu`;
+
+  // Fetch patients list
+  const fetchPatients = async () => {
+    try {
+      setLoading(true);
+      const res = await axios.get(API_URL);
+
+      // ✅ Remove duplicate MR numbers
+      const uniquePatients = res.data.reduce((acc: any[], curr: any) => {
+        if (!acc.find((p) => p.PMR_NO === curr.PMR_NO)) {
+          acc.push(curr);
+        }
+        return acc;
+      }, []);
+
+      setPatients(uniquePatients);
+    } catch (err) {
+      console.error("❌ Error fetching patients:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Fetch notes by PATIENT_ID
+  const fetchNotes = async (patientId: number) => {
+    try {
+      setNotesLoading(true);
+      const url =
+        Platform.OS === "android"
+          ? `http://10.0.2.2:3000/patients/${patientId}/notes`
+          : `http://${LOCAL_IP}:3000/patients/${patientId}/notes`;
+
+      const res = await axios.get(url);
+      setNotes(res.data);
+    } catch (err) {
+      console.error("❌ Error fetching notes:", err);
+      setNotes([]);
+    } finally {
+      setNotesLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchPatients();
   }, []);
 
-  const filteredPatients = patientList.filter(
-    p =>
-      p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      p.mrNumber.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      p.uniqueKey.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  // Filter patients by name, MR, or PATIENT_ID
+  useEffect(() => {
+    const lower = searchQuery.toLowerCase();
+    const filtered = patients
+      .map((p) => ({
+        ...p,
+        name: `${p.PATIENT_FNAME} ${p.PATIENT_LNAME}`.trim(),
+        mrNumber: p.PMR_NO,
+        patientId: p.PATIENT_ID,
+        status: p.EMERGENCY_STATUS === 1 ? "Critical" : "Stable",
+        diagnosis: p.diagnosis || "",
+        ward: p.WARD_ID,
+        doctor: p.DOCTOR_ID,
+      }))
+      .filter(
+        (p) =>
+          p.name.toLowerCase().includes(lower) ||
+          p.mrNumber?.toString().toLowerCase().includes(lower) ||
+          p.patientId?.toString().includes(lower)
+      );
+    setFilteredPatients(filtered);
+  }, [patients, searchQuery]);
 
-  const openModal = (patient: Patient) => {
+  const onRefresh = () => {
+    setRefreshing(true);
+    fetchPatients().finally(() => setRefreshing(false));
+  };
+
+  // Open modal and fetch notes if needed
+  const openModal = (
+    patient: any,
+    type: "notes" | "lab" | "radiology"
+  ) => {
     setSelectedPatient(patient);
-    setModalVisible(true);
+    setModalType(type);
+
+    if (type === "notes") {
+      fetchNotes(patient.PATIENT_ID);
+    }
   };
 
   const closeModal = () => {
     setSelectedPatient(null);
-    setModalVisible(false);
+    setModalType(null);
+    setNotes([]); // reset notes
   };
 
-  const renderPatient = ({ item }: { item: Patient }) => (
+  const renderPatient = ({ item }: { item: any }) => (
     <View style={styles.card}>
       <View style={styles.cardHeader}>
         <View style={{ flexDirection: "row", alignItems: "center" }}>
-          <View style={styles.avatar}>
-            <Text style={styles.avatarText}>{item.name.split(" ").map(n => n[0]).join("")}</Text>
-          </View>
+          <Image
+            source={
+              item.GENDER === "Female"
+                ? require("../images/female.png")
+                : require("../images/avatar.png")
+            }
+            style={styles.avatarImage}
+          />
           <View style={{ marginLeft: 8 }}>
             <Text style={styles.patientName}>{item.name}</Text>
-            <Text style={styles.patientMR}>{item.mrNumber}</Text>
+            <Text style={styles.patientMR}>MR: {item.mrNumber}</Text>
+            <Text style={styles.patientMR}>ID: {item.patientId}</Text>
           </View>
         </View>
         <View>
           <Text
             style={[
               styles.statusBadge,
-              item.status === "Critical"
-                ? styles.critical
-                : item.status === "Monitoring"
-                ? styles.monitoring
-                : item.status === "Recovering"
-                ? styles.recovering
-                : styles.stable,
+              item.status === "Critical" ? styles.critical : styles.stable,
             ]}
           >
             {item.status}
@@ -129,20 +167,30 @@ export default function PatientsScreen() {
 
       <View style={styles.infoRow}>
         <Text style={styles.infoLabel}>Diagnosis:</Text>
-        <Text style={styles.infoValue}>{item.diagnosis}</Text>
+        <Text style={styles.infoValue}>{item.diagnosis || "N/A"}</Text>
       </View>
 
       <View style={styles.buttonRow}>
-        <TouchableOpacity style={styles.button} onPress={() => openModal(item)}>
+        <TouchableOpacity
+          style={styles.button}
+          onPress={() => openModal(item, "notes")}
+        >
           <Eye size={16} color="#fff" />
           <Text style={styles.buttonText}>Notes</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.button} onPress={() => openModal(item)}>
+        <TouchableOpacity
+          style={styles.button}
+          onPress={() => openModal(item, "lab")}
+        >
           <FileText size={16} color="#fff" />
           <Text style={styles.buttonText}>Lab Reports</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.button} onPress={() => openModal(item)}>
+
+        <TouchableOpacity
+          style={styles.button}
+          onPress={() => openModal(item, "radiology")}
+        >
           <FileText size={16} color="#fff" />
           <Text style={styles.buttonText}>Radiology</Text>
         </TouchableOpacity>
@@ -150,15 +198,123 @@ export default function PatientsScreen() {
     </View>
   );
 
+  // Modal content
+  const renderModalContent = () => {
+    if (!selectedPatient || !modalType) return null;
+
+    return (
+      <>
+        <Image
+          source={
+            selectedPatient.GENDER === "Female"
+              ? require("../images/female.png")
+              : require("../images/avatar.png")
+          }
+          style={styles.modalAvatar}
+        />
+        <Text style={styles.modalTitle}>{selectedPatient.name}</Text>
+        <Text>MR Number: {selectedPatient.mrNumber}</Text>
+        <Text>PATIENT_ID: {selectedPatient.patientId}</Text>
+        <Text>Age: {selectedPatient.AGE || "N/A"}</Text>
+        <Text>
+          Phone:{" "}
+          {selectedPatient.PHONE_NO ||
+            selectedPatient.MOBILE_NO ||
+            "N/A"}
+        </Text>
+        <Text>Diagnosis: {selectedPatient.diagnosis || "N/A"}</Text>
+        <Text>Ward: {selectedPatient.ward}</Text>
+        <Text>Doctor: {selectedPatient.doctor}</Text>
+        <Text>Status: {selectedPatient.status}</Text>
+
+        {/* Notes Modal */}
+        {modalType === "notes" && (
+          <View style={{ marginTop: 12 }}>
+            <Text style={{ fontWeight: "600", marginBottom: 6 }}>
+              Patient Notes:
+            </Text>
+
+            {notesLoading ? (
+              <ActivityIndicator size="small" color="#00A652" />
+            ) : notes.length > 0 ? (
+              notes.map((note: any) => (
+                <View
+                  key={note.Loc_ID}
+                  style={{
+                    backgroundColor: "#f9fafb",
+                    borderRadius: 6,
+                    padding: 8,
+                    marginBottom: 8,
+                  }}
+                >
+                  <Text style={{ fontWeight: "500" }}>
+                    Date:{" "}
+                    {note.loc_ex_date
+                      ? new Date(note.loc_ex_date).toLocaleDateString()
+                      : "N/A"}
+                  </Text>
+                  <Text style={{ marginTop: 4 }}>
+                    {note.LocalExamination || "No details provided"}
+                  </Text>
+                </View>
+              ))
+            ) : (
+              <Text>No notes available.</Text>
+            )}
+          </View>
+        )}
+
+        {/* Lab Modal */}
+        {modalType === "lab" && (
+          <View style={{ marginTop: 12 }}>
+            <Text style={{ fontWeight: "600", marginBottom: 6 }}>
+              Lab Reports:
+            </Text>
+            <Text>Lab results will be shown here.</Text>
+          </View>
+        )}
+
+        {/* Radiology Modal */}
+        {modalType === "radiology" && selectedPatient.radiology && (
+          <View style={{ marginTop: 12 }}>
+            <Text style={{ fontWeight: "700", marginBottom: 6 }}>
+              Radiology Report ({selectedPatient.radiology.report_categ} -{" "}
+              {selectedPatient.radiology.report_sub})
+            </Text>
+
+            <RenderHtml
+              contentWidth={width}
+              source={{ html: selectedPatient.radiology.report_data }}
+            />
+
+            <Text
+              style={{
+                fontWeight: "700",
+                marginTop: 12,
+                marginBottom: 6,
+              }}
+            >
+              Conclusion
+            </Text>
+            <RenderHtml
+              contentWidth={width}
+              source={{ html: selectedPatient.radiology.concl }}
+            />
+          </View>
+        )}
+      </>
+    );
+  };
+
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.title}>Patients</Text>
+        <Text style={styles.title}>Patients (PICU)</Text>
         <View style={styles.searchContainer}>
           <Search size={16} color="#454242ff" />
           <TextInput
-            placeholder="Search by name, MR, or key"
-            placeholderTextColor="#888888"
+            placeholder="Search by name, MR, ID"
+            placeholderTextColor="#888"
             value={searchQuery}
             onChangeText={setSearchQuery}
             style={styles.searchInput}
@@ -168,30 +324,37 @@ export default function PatientsScreen() {
 
       <FlatList
         data={filteredPatients}
-        keyExtractor={item => item.id}
+        keyExtractor={(item) => item.PATIENT_ID.toString()}
         renderItem={renderPatient}
         contentContainerStyle={{ paddingBottom: 100 }}
         refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={["#00A652"]} />
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            colors={["#00A652"]}
+          />
+        }
+        ListFooterComponent={
+          loading ? <ActivityIndicator size="large" color="#00A652" /> : null
         }
       />
 
-      {/* Modal */}
-      <Modal isVisible={isModalVisible} onBackdropPress={closeModal} style={styles.modal}>
+      {/* Smooth Modal */}
+      <Modal
+        isVisible={!!modalType}
+        onBackdropPress={closeModal}
+        style={styles.modal}
+        animationIn="slideInUp"
+        animationOut="slideOutDown"
+        animationInTiming={300}
+        animationOutTiming={300}
+        backdropTransitionInTiming={300}
+        backdropTransitionOutTiming={300}
+        useNativeDriver={true}
+        useNativeDriverForBackdrop={true}
+      >
         <View style={styles.modalContent}>
-          <ScrollView>
-            <Text style={styles.modalTitle}>{selectedPatient?.name}</Text>
-            <Text>MR Number: {selectedPatient?.mrNumber}</Text>
-            <Text>Unique Key: {selectedPatient?.uniqueKey}</Text>
-            <Text>Age: {selectedPatient?.age}</Text>
-            <Text>Phone: {selectedPatient?.phone}</Text>
-            <Text>Diagnosis: {selectedPatient?.diagnosis}</Text>
-            <Text>Ward: {selectedPatient?.ward}</Text>
-            <Text>Room: {selectedPatient?.room}</Text>
-            <Text>Doctor: {selectedPatient?.doctor}</Text>
-            <Text>Status: {selectedPatient?.status}</Text>
-            <Text>Admission Date: {selectedPatient?.admissionDate}</Text>
-          </ScrollView>
+          <ScrollView>{renderModalContent()}</ScrollView>
           <TouchableOpacity onPress={closeModal} style={styles.closeButton}>
             <Text style={{ color: "#fff", textAlign: "center" }}>Close</Text>
           </TouchableOpacity>
@@ -208,31 +371,27 @@ const styles = StyleSheet.create({
   searchContainer: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#ffffffff",
+    backgroundColor: "#fff",
     borderRadius: 8,
     paddingHorizontal: 8,
   },
   searchInput: { flex: 1, paddingVertical: 6, paddingHorizontal: 8 },
 
-  card: { backgroundColor: "#fff", margin: 8, borderRadius: 10, padding: 12 },
+  card: {
+    backgroundColor: "#fff",
+    margin: 8,
+    borderRadius: 10,
+    padding: 12,
+  },
   cardHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
     marginBottom: 8,
   },
-  avatar: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: "#ddd",
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  avatarText: { fontWeight: "700" },
+  avatarImage: { width: 40, height: 40, borderRadius: 20 },
   patientName: { fontWeight: "600" },
   patientMR: { color: "#666", fontSize: 12 },
-
   statusBadge: {
     paddingHorizontal: 6,
     paddingVertical: 2,
@@ -240,12 +399,14 @@ const styles = StyleSheet.create({
     fontSize: 10,
     textAlign: "center",
   },
+  stable: { backgroundColor: "#bbf7d0", color: "#00A652" },
   critical: { backgroundColor: "#fecaca", color: "#991b1b" },
-  monitoring: { backgroundColor: "#fef3c7", color: "#78350f" },
-  recovering: { backgroundColor: "#bbf7d0", color: "#00A652" },
-  stable: { backgroundColor: "#bfdbfe", color: "#1e40af" },
 
-  infoRow: { flexDirection: "row", justifyContent: "space-between", marginVertical: 4 },
+  infoRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginVertical: 4,
+  },
   infoLabel: { fontWeight: "600" },
   infoValue: { color: "#444" },
 
@@ -274,6 +435,7 @@ const styles = StyleSheet.create({
     maxHeight: "80%",
   },
   modalTitle: { fontSize: 18, fontWeight: "700", marginBottom: 8 },
+  modalAvatar: { width: 80, height: 80, borderRadius: 40, marginBottom: 10 },
   closeButton: {
     backgroundColor: "#00A652",
     borderRadius: 6,
