@@ -1,0 +1,234 @@
+import cors from "cors";
+import express from "express";
+import mysql from "mysql2";
+
+const app = express();
+app.use(cors());
+
+// ✅ MySQL connection
+const db = mysql.createConnection({
+  host: "192.168.1.130", // your MySQL server IP
+  user: "labintegration",
+  password: "chkefro",
+  database: "convert_april",
+});
+
+db.connect((err) => {
+  if (err) {
+    console.error("❌ DB Connection Error:", err);
+  } else {
+    console.log("✅ Connected to database");
+  }
+});
+
+// ✅ Generic paginated fetch
+const fetchPaginated = (tableName, req, res) => {
+  const limit = parseInt(req.query.limit) || 1000;
+  const offset = parseInt(req.query.offset) || 0;
+
+  const query = `SELECT * FROM \`${tableName}\` LIMIT ? OFFSET ?`;
+  db.query(query, [limit, offset], (err, results) => {
+    if (err) {
+      console.error(`❌ Error fetching ${tableName}:`, err);
+      res.status(500).send(err);
+    } else {
+      res.json(results);
+    }
+  });
+};
+
+// ✅ Generic count
+const fetchCount = (tableName, res) => {
+  const query = `SELECT COUNT(*) as total FROM \`${tableName}\``;
+  db.query(query, (err, results) => {
+    if (err) {
+      console.error(`❌ Error counting ${tableName}:`, err);
+      res.status(500).send(err);
+    } else {
+      res.json({ total: results[0].total });
+    }
+  });
+};
+
+// ✅ Routes for base tables
+const tables = [
+  "prg_patient_reg",
+  "opd_local_examination",
+  "newris_report",
+  "tr_newris_request",
+  "admin",
+  "ward_beds",
+  "adm_requests",
+  "eis_personal_information",
+  "ward_bed_assign",
+];
+
+tables.forEach((table) => {
+  app.get(`/${table}`, (req, res) => fetchPaginated(table, req, res));
+  app.get(`/${table}/count`, (req, res) => fetchCount(table, res));
+});
+
+// ✅ All patients (with optional notes + radiology)
+app.get("/patients_all", (req, res) => {
+  const limit = parseInt(req.query.limit) || 1000;
+  const offset = parseInt(req.query.offset) || 0;
+
+  const query = `
+    SELECT 
+      p.*,
+      o.LocalExamination,
+      o.loc_ex_date,
+      r.*
+    FROM prg_patient_reg p
+    LEFT JOIN opd_local_examination o ON p.PATIENT_ID = o.PATIENT_ID
+    LEFT JOIN tr_newris_request r ON p.PATIENT_ID = r.PATIENT_ID
+    ORDER BY p.PATIENT_ID DESC
+    LIMIT ? OFFSET ?
+  `;
+
+  db.query(query, [limit, offset], (err, results) => {
+    if (err) {
+      console.error("❌ Error fetching patients_all:", err);
+      return res.status(500).json({ error: err.message });
+    }
+    res.json(results);
+  });
+});
+
+// ✅ All patients count (unique patients)
+app.get("/patients_all/count", (req, res) => {
+  const query = `
+    SELECT COUNT(DISTINCT p.PATIENT_ID) AS total
+    FROM prg_patient_reg p
+    LEFT JOIN opd_local_examination o ON p.PATIENT_ID = o.PATIENT_ID
+    LEFT JOIN tr_newris_request r ON p.PATIENT_ID = r.PATIENT_ID
+  `;
+  db.query(query, (err, results) => {
+    if (err) {
+      console.error("❌ Error counting patients_all:", err);
+      return res.status(500).json({ error: err.message });
+    }
+    res.json({ total: results[0].total });
+  });
+});
+
+// ✅ PICU patients
+app.get("/patients_picu", (req, res) => {
+  const limit = parseInt(req.query.limit) || 2000;
+  const offset = parseInt(req.query.offset) || 0;
+
+  const query = `
+    SELECT p.*, o.*
+    FROM prg_patient_reg p
+    JOIN opd_local_examination o ON p.PATIENT_ID = o.PATIENT_ID
+    ORDER BY o.loc_ex_date DESC
+    LIMIT ? OFFSET ?
+  `;
+
+  db.query(query, [limit, offset], (err, results) => {
+    if (err) {
+      console.error("❌ Error fetching patients_picu:", err);
+      return res.status(500).json({ error: err.message });
+    }
+    res.json(results);
+  });
+});
+
+// ✅ PICU count
+app.get("/patients_picu/count", (req, res) => {
+  const query = `
+    SELECT COUNT(*) as total
+    FROM prg_patient_reg p
+    JOIN opd_local_examination o ON p.PATIENT_ID = o.PATIENT_ID
+  `;
+  db.query(query, (err, results) => {
+    if (err) {
+      console.error("❌ Error counting patients_picu:", err);
+      return res.status(500).json({ error: err.message });
+    }
+    res.json({ total: results[0].total });
+  });
+});
+
+// ✅ Lab reports
+app.get("/labreports", (req, res) => {
+  const limit = parseInt(req.query.limit) || 1000;
+  const offset = parseInt(req.query.offset) || 0;
+
+  const query = `
+    SELECT o.*, a.*
+    FROM opd_local_examination o
+    INNER JOIN adm_requests a ON o.PATIENT_ID = a.PATIENT_ID
+    LIMIT ? OFFSET ?
+  `;
+
+  db.query(query, [limit, offset], (err, results) => {
+    if (err) {
+      console.error("❌ Error fetching labreports:", err);
+      return res.status(500).json({ error: err.message });
+    }
+    res.json(results);
+  });
+});
+
+// ✅ Lab reports count
+app.get("/labreports/count", (req, res) => {
+  const query = `
+    SELECT COUNT(*) as total
+    FROM opd_local_examination o
+    INNER JOIN adm_requests a ON o.PATIENT_ID = a.PATIENT_ID
+  `;
+  db.query(query, (err, results) => {
+    if (err) {
+      console.error("❌ Error counting labreports:", err);
+      return res.status(500).json({ error: err.message });
+    }
+    res.json({ total: results[0].total });
+  });
+});
+
+// ✅ Notes for patient
+app.get("/patients/:id/notes", (req, res) => {
+  const patientId = req.params.id;
+
+  const query = `
+    SELECT Loc_ID, PATIENT_ID, OPD_VISIT_ID, LocalExamination, loc_ex_date, created_at
+    FROM opd_local_examination
+    WHERE PATIENT_ID = ?
+    ORDER BY loc_ex_date DESC
+  `;
+
+  db.query(query, [patientId], (err, results) => {
+    if (err) {
+      console.error("❌ Error fetching notes:", err);
+      return res.status(500).json({ error: "Database error" });
+    }
+    res.json(results);
+  });
+});
+
+// ✅ Radiology reports for patient
+app.get("/patients/:id/radiology", (req, res) => {
+  const patientId = req.params.id;
+
+  const query = `
+    SELECT r.*
+    FROM tr_newris_request r
+    WHERE r.PATIENT_ID = ?
+    ORDER BY r.request_time DESC
+  `;
+
+  db.query(query, [patientId], (err, results) => {
+    if (err) {
+      console.error("❌ Error fetching radiology reports:", err);
+      return res.status(500).json({ error: "Database error" });
+    }
+    res.json(results);
+  });
+});
+
+// ✅ Start server
+const PORT = 3000;
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`🚀 Server running on http://192.168.100.102:${PORT}`);
+});
